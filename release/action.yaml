@@ -1,0 +1,117 @@
+name: 'Tag, Release and Build Docker Image'
+description: 'Composite action to tag, create a GitHub release, and build/push a Docker image for a .NET project.'
+
+inputs:
+  version-file:
+    description: 'Path to the file containing the version (e.g., .csproj)'
+    required: true
+  docker-context:
+    description: 'Docker build context (default: src)'
+    required: false
+    default: 'src'
+  registry:
+    description: 'Container registry (default: ghcr.io)'
+    required: false
+    default: 'ghcr.io'
+  image-name:
+    description: 'Image name (default: github.repository)'
+    required: false
+    default: ''
+  dotnet-version:
+    description: 'Version of .NET to use'
+    required: false
+    default: '9.0.x'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get latest tag
+      id: get_latest_tag
+      run: |
+        # Get the latest tag, or the first commit if no tags exist
+        PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+        echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Get the current version
+      id: get_version
+      run: |
+        # Extract the version from the provided version file (e.g., .csproj)
+        VERSION_SIMPLIFIED=$(grep '<Version>' ${{ inputs.version-file }} | cut -f 2 -d '>' | cut -f 1 -d '<')
+        VERSION="v${VERSION_SIMPLIFIED}"
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION_SIMPLIFIED=$VERSION_SIMPLIFIED" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Create tag if new version
+      id: create_tag
+      run: |
+        # Create and push a new tag if the version has changed
+        if [ "${{ steps.get_version.outputs.VERSION }}" != "${{ steps.get_latest_tag.outputs.PREVIOUS_TAG }}" ]; then
+          git tag ${{ steps.get_version.outputs.VERSION }}
+          git push origin ${{ steps.get_version.outputs.VERSION }}
+          echo "tag_created=true" >> $GITHUB_OUTPUT
+        else
+          echo "tag_created=false" >> $GITHUB_OUTPUT
+        fi
+      shell: bash
+
+    - name: Generate changelog from commits
+      id: changelog
+      if: steps.create_tag.outputs.tag_created == 'true'
+      run: |
+        # Generate a changelog from commit messages between the previous tag and HEAD
+        PREVIOUS_TAG="${{ steps.get_latest_tag.outputs.PREVIOUS_TAG }}"
+        VERSION="${{ steps.get_version.outputs.VERSION }}"
+        git log --pretty=format:'* %s (%h)' "${PREVIOUS_TAG}..HEAD" > changelog.txt
+        CHANGELOG=$(awk '{printf "%s%s", NR==1?"":"%0A", $0}' changelog.txt)
+        echo "CHANGELOG=$CHANGELOG" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Create GitHub Release
+      if: steps.create_tag.outputs.tag_created == 'true'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        release_name: ${{ steps.get_version.outputs.VERSION }}
+        draft: false
+        body: ${{ steps.changelog.outputs.CHANGELOG }}
+        prerelease: false
+
+    - name: Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image-name || github.repository }}
+        tags: |
+          type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
+          type=semver,pattern={{major}}.{{minor}},value=${{ steps.get_version.outputs.VERSION }}
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to the Container registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ env.GITHUB_TOKEN }}
+
+    - name: Build and push
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.docker-context }}
+        push: true
+        platforms: linux/amd64
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        annotations: ${{ steps.meta.outputs.annotations }}
+        cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image-name || github.repository }}:latest
+        cache-to: type=inline
