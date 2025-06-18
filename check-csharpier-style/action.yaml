@@ -1,0 +1,36 @@
+name: 'Check CSharpier Formatting'
+description: 'Checks CSharpier formatting on the source code'
+
+inputs:
+  dotnet-version:
+    description: 'Version of .NET to use'
+    required: false
+    default: '9.0.105'
+  csharpier-version:
+    description: 'Version of CSharpier to use'
+    required: false
+    default: '1.0.1'
+  src-path:
+    description: 'Path to the source code to check'
+    required: false
+    default: 'src'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Install CSharpier
+      run: dotnet tool install --global csharpier --version ${{ inputs.csharpier-version }}
+      shell: bash
+
+    - name: Check CSharpier version
+      run: csharpier --version
+      shell: bash
+
+    - name: Run CSharpier check
+      run: csharpier check ${{ inputs.src-path }}
+      shell: bash
