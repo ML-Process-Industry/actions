@@ -1,0 +1,39 @@
+name: 'Build and Test'
+description: 'Composite action to build and test a .NET project with artifact upload.'
+
+inputs:
+  dotnet-version:
+    description: 'Version of .NET to use'
+    required: false
+    default: '9.0.x'
+  src-path:
+    description: 'Path to the source code (solution directory)'
+    required: false
+    default: 'src'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Install dependencies
+      run: cd ${{ inputs.src-path }} && dotnet restore
+      shell: bash
+
+    - name: Build
+      run: cd ${{ inputs.src-path }} && dotnet build --no-restore -warnaserror
+      shell: bash
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-output
+        path: ${{ inputs.src-path }}/**/bin/**
+
+    - name: Run tests
+      run: cd ${{ inputs.src-path }} && dotnet test --no-build
+      shell: bash
+
