@@ -5,7 +5,7 @@ inputs:
   dotnet-version:
     description: 'Version of .NET to use'
     required: false
-    default: '9.0.105'
+    default: '9.0.x'
   csharpier-version:
     description: 'Version of CSharpier to use'
     required: false
