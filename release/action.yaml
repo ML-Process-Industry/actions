@@ -109,7 +109,9 @@ runs:
         password: ${{ env.GHCR_TOKEN }}
 
     - name: Build and push
+      id: build_and_push
       if: steps.create_tag.outputs.tag_created == 'true'
+      continue-on-error: true
       uses: docker/build-push-action@v5
       with:
         context: ${{ inputs.docker-context }}
@@ -120,3 +122,22 @@ runs:
         annotations: ${{ steps.meta.outputs.annotations }}
         cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.image-name || github.repository }}:latest
         cache-to: type=inline
+
+    - name: Cleanup on Docker build failure
+      if: steps.create_tag.outputs.tag_created == 'true' && steps.build_and_push.outcome == 'failure'
+      run: |
+        echo "Docker build failed. Cleaning up tag and release..."
+        
+        # Delete the tag locally and remotely
+        git tag -d ${{ steps.get_version.outputs.VERSION }} || true
+        git push --delete origin ${{ steps.get_version.outputs.VERSION }} || true
+        
+        # Delete the GitHub release
+        curl -X DELETE \
+          -H "Authorization: token ${{ env.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.get_version.outputs.VERSION }}" || true
+        
+        echo "Cleanup completed. Failing the workflow."
+        exit 1
+      shell: bash
